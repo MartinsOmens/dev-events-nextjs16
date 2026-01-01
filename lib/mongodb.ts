@@ -1,12 +1,8 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 // MongoDB connection string
 // Ensure you have MONGODB_URI defined in your environment variables (e.g. .env.local)
 const MONGODB_URI = process.env.MONGODB_URI;
-
-if (!MONGODB_URI) {
-  throw new Error('Please define the MONGODB_URI environment variable inside your environment (e.g. .env.local)');
-}
 
 // Describe the shape of our cached connection object
 interface MongooseCache {
@@ -41,6 +37,11 @@ if (!global.mongooseCache) {
  * during development when Next.js performs hot reloads.
  */
 export async function connectToDatabase(): Promise<typeof mongoose> {
+  if (!MONGODB_URI) {
+    throw new Error(
+      "Please define the MONGODB_URI environment variable inside your environment (e.g. .env.local)"
+    );
+  }
   // If we already have an active connection, reuse it.
   if (cached.conn) {
     return cached.conn;
@@ -48,11 +49,13 @@ export async function connectToDatabase(): Promise<typeof mongoose> {
 
   // If a connection promise is already in-flight, await it instead of creating a new one.
   if (!cached.promise) {
-    cached.promise = mongoose.connect(MONGODB_URI, {
-      // Add any options you need here; leaving it empty uses Mongoose defaults.
-      // Example:
-      // dbName: 'your-database-name',
-    }).then((mongooseInstance) => mongooseInstance);
+    cached.promise = mongoose
+      .connect(MONGODB_URI, {
+        // Add any options you need here; leaving it empty uses Mongoose defaults.
+        // Example:
+        // dbName: 'your-database-name',
+      })
+      .then((mongooseInstance) => mongooseInstance);
   }
 
   cached.conn = await cached.promise;
