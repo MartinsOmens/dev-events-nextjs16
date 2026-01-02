@@ -7,7 +7,6 @@ const Button = () => {
     <div>
       <button
         type="button"
-        onClick={() => console.log("Clicked")}
         id="explore-btn"
         className="mx-auto mt-10"
       >
