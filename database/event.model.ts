@@ -23,14 +23,14 @@ export interface Event {
 export type EventDocument = HydratedDocument<Event>;
 
 // Helper to generate a URL-safe slug from the event title
-const slugify = (value: string): string =>
+export const slugify = (value: string): string =>
   value
     .toLowerCase()
     .trim()
-    .replace(/[^a-z0-9]+/g, "-") // replace non-alphanumeric with dashes
-    .replace(/^-+|-+$/g, ""); // trim leading/trailing dashes
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 
-// Basic string non-empty validator reused for multiple fields
+// Basic string non-empty validator
 const isNonEmptyString = (value: string): boolean =>
   typeof value === "string" && value.trim().length > 0;
 
@@ -48,7 +48,7 @@ const eventSchema = new Schema<Event, Model<Event>>(
     slug: {
       type: String,
       unique: true,
-      index: true, // index to support fast lookups and enforce uniqueness
+      index: true,
       required: true,
       trim: true,
     },
@@ -70,42 +70,15 @@ const eventSchema = new Schema<Event, Model<Event>>(
         message: "Overview must not be empty",
       },
     },
-    image: {
-      type: String,
-      required: true,
-      trim: true,
-      validate: {
-        validator: isNonEmptyString,
-        message: "Image URL must not be empty",
-      },
-    },
-    venue: {
-      type: String,
-      required: true,
-      trim: true,
-      validate: {
-        validator: isNonEmptyString,
-        message: "Venue must not be empty",
-      },
-    },
-    location: {
-      type: String,
-      required: true,
-      trim: true,
-      validate: {
-        validator: isNonEmptyString,
-        message: "Location must not be empty",
-      },
-    },
+    image: { type: String, required: true, trim: true, validate: { validator: isNonEmptyString, message: "Image URL must not be empty" } },
+    venue: { type: String, required: true, trim: true, validate: { validator: isNonEmptyString, message: "Venue must not be empty" } },
+    location: { type: String, required: true, trim: true, validate: { validator: isNonEmptyString, message: "Location must not be empty" } },
     date: {
       type: String,
       required: true,
       trim: true,
       validate: {
-        validator: (value: string): boolean => {
-          const parsedDate = new Date(value);
-          return !Number.isNaN(parsedDate.getTime());
-        },
+        validator: (value: string) => !isNaN(new Date(value).getTime()),
         message: "Invalid date format; expected a parsable date string",
       },
     },
@@ -114,162 +87,70 @@ const eventSchema = new Schema<Event, Model<Event>>(
       required: true,
       trim: true,
       validate: {
-        validator: (value: string): boolean => {
-          const timeMatch = /^(?<hour>\d{1,2}):(?<minute>\d{2})$/.exec(
-            value.trim()
-          );
-          if (!timeMatch?.groups) return false;
-          const hour = Number(timeMatch.groups.hour);
-          const minute = Number(timeMatch.groups.minute);
-          return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59;
+        validator: (value: string) => {
+          const m = /^(?<hour>\d{1,2}):(?<minute>\d{2})$/.exec(value.trim());
+          if (!m?.groups) return false;
+          const h = Number(m.groups.hour);
+          const min = Number(m.groups.minute);
+          return h >= 0 && h <= 23 && min >= 0 && min <= 59;
         },
-        message: "Invalid time format; expected HH:mm (24-hour)",
+        message: "Invalid time format; expected HH:mm",
       },
     },
-    mode: {
-      type: String,
-      required: true,
-      trim: true,
-      validate: {
-        validator: isNonEmptyString,
-        message: "Mode must not be empty",
-      },
-    },
-    audience: {
-      type: String,
-      required: true,
-      trim: true,
-      validate: {
-        validator: isNonEmptyString,
-        message: "Audience must not be empty",
-      },
-    },
-    agenda: {
-      type: [String],
-      required: true,
-      validate: {
-        validator: (value: string[]): boolean =>
-          Array.isArray(value) &&
-          value.length > 0 &&
-          value.every(isNonEmptyString),
-        message: "Agenda must contain at least one non-empty item",
-      },
-    },
-    organizer: {
-      type: String,
-      required: true,
-      trim: true,
-      validate: {
-        validator: isNonEmptyString,
-        message: "Organizer must not be empty",
-      },
-    },
-    tags: {
-      type: [String],
-      required: true,
-      validate: {
-        validator: (value: string[]): boolean =>
-          Array.isArray(value) &&
-          value.length > 0 &&
-          value.every(isNonEmptyString),
-        message: "Tags must contain at least one non-empty tag",
-      },
-    },
+    mode: { type: String, required: true, trim: true, validate: { validator: isNonEmptyString, message: "Mode must not be empty" } },
+    audience: { type: String, required: true, trim: true, validate: { validator: isNonEmptyString, message: "Audience must not be empty" } },
+    agenda: { type: [String], required: true, validate: { validator: (arr: string[]) => arr.length > 0 && arr.every(isNonEmptyString), message: "Agenda must contain at least one non-empty item" } },
+    organizer: { type: String, required: true, trim: true, validate: { validator: isNonEmptyString, message: "Organizer must not be empty" } },
+    tags: { type: [String], required: true, validate: { validator: (arr: string[]) => arr.length > 0 && arr.every(isNonEmptyString), message: "Tags must contain at least one non-empty tag" } },
   },
-  {
-    timestamps: true, // automatically manage createdAt and updatedAt
-    strict: true,
-  }
+  { timestamps: true, strict: true }
 );
 
-// Ensure slug has a unique index at the database level
+// Ensure slug has unique index
 eventSchema.index({ slug: 1 }, { unique: true });
 
-// Normalize date and time + generate slug before saving
-// This runs for both inserts and updates via save(), but not for updateOne/findOneAndUpdate.
-eventSchema.pre<EventDocument>("save", function preSave(next) {
-  // Only regenerate slug when the title changes to keep existing URLs stable.
-  if (this.isModified("title")) {
+/**
+ * Pre-validate middleware:
+ *  - Generate slug if missing
+ *  - Normalize date to YYYY-MM-DD
+ *  - Normalize time to HH:mm
+ */
+eventSchema.pre<EventDocument>("validate", function () {
+  // Generate slug if missing
+  if (!this.slug && this.title) {
     this.slug = slugify(this.title);
   }
 
-  // Normalize date to ISO format (YYYY-MM-DD).
-  if (this.isModified("date")) {
-    const parsedDate = new Date(this.date);
-
-    if (Number.isNaN(parsedDate.getTime())) {
-      return next(
-        new Error("Invalid date format; expected a parsable date string")
-      );
+  // Normalize date
+  if (this.date) {
+    const d = new Date(this.date);
+    if (isNaN(d.getTime())) {
+      throw new Error("Invalid date format");
     }
-
-    this.date = parsedDate.toISOString().slice(0, 10); // YYYY-MM-DD
+    this.date = d.toISOString().slice(0, 10);
   }
 
-  // Normalize time to 24-hour HH:mm format.
-  if (this.isModified("time")) {
-    const timeString = this.time.trim();
-    // Accepts `H:mm` or `HH:mm` and normalizes to `HH:mm`.
-    const timeMatch = /^(?<hour>\d{1,2}):(?<minute>\d{2})$/.exec(timeString);
-
-    if (!timeMatch || !timeMatch.groups) {
-      return next(new Error("Invalid time format; expected HH:mm (24-hour)"));
+  // Normalize time
+  if (this.time) {
+    const m = /^(?<hour>\d{1,2}):(?<minute>\d{2})$/.exec(this.time.trim());
+    if (!m?.groups) {
+      throw new Error("Invalid time format");
     }
 
-    const hour = Number(timeMatch.groups.hour);
-    const minute = Number(timeMatch.groups.minute);
+    const h = Number(m.groups.hour);
+    const min = Number(m.groups.minute);
 
-    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
-      return next(
-        new Error("Invalid time value; hour must be 0-23 and minute 0-59")
-      );
+    if (h < 0 || h > 23 || min < 0 || min > 59) {
+      throw new Error("Invalid time value");
     }
 
-    this.time = `${hour.toString().padStart(2, "0")}:${minute
+    this.time = `${h.toString().padStart(2, "0")}:${min
       .toString()
       .padStart(2, "0")}`;
   }
-
-  // Extra defensive check for critical required fields being non-empty.
-  const requiredStrings: Array<keyof Event> = [
-    "title",
-    "description",
-    "overview",
-    "image",
-    "venue",
-    "location",
-    "date",
-    "time",
-    "mode",
-    "audience",
-    "organizer",
-  ];
-
-  for (const field of requiredStrings) {
-    const value = this[field];
-    if (typeof value !== "string" || value.trim().length === 0) {
-      return next(
-        new Error(`Field "${String(field)}" is required and must not be empty`)
-      );
-    }
-  }
-
-  if (!Array.isArray(this.agenda) || this.agenda.length === 0) {
-    return next(
-      new Error("Agenda is required and must contain at least one item")
-    );
-  }
-
-  if (!Array.isArray(this.tags) || this.tags.length === 0) {
-    return next(
-      new Error("Tags are required and must contain at least one tag")
-    );
-  }
-
-  next();
 });
 
-// Reuse existing model in development to avoid OverwriteModelError
+
+// Reuse existing model in development
 export const EventModel: Model<Event> =
-  (mongoose.models.Event as Model<Event> | undefined) ??
-  mongoose.model<Event>("Event", eventSchema);
+  (mongoose.models.Event as Model<Event> | undefined) ?? mongoose.model<Event>("Event", eventSchema);
